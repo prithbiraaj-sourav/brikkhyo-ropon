@@ -24,6 +24,8 @@ export type Tree = {
   zone: string
   tree_name: string
   tree_scientific?: string
+  quantity: number
+  location_name?: string
   notes?: string
   latitude: number
   longitude: number

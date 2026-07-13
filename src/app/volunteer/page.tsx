@@ -1,24 +1,39 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { ZONES, TREE_SUGGESTIONS, MAP_CONFIG } from '@/lib/constants'
 import type { Organization } from '@/lib/supabase'
+
+// Leaflet must not SSR
+const LocationPicker = dynamic(() => import('@/components/LocationPicker'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[280px] w-full rounded-lg bg-gray-100 flex items-center justify-center text-xs text-gray-400">
+      ম্যাপ লোড হচ্ছে…
+    </div>
+  ),
+})
+
+type TreeEntry = { tree_name: string; quantity: string }
 
 type FormData = {
   department: string
   zone: string
-  tree_name: string
-  tree_scientific: string
+  location_name: string
   notes: string
   latitude: string
   longitude: string
 }
 
+type SubmittedTree = { id: string; tree_code: string; tree_name: string; quantity: number }
+
 const INITIAL: FormData = {
-  department: '', zone: '',
-  tree_name: '', tree_scientific: '', notes: '',
+  department: '', zone: '', location_name: '', notes: '',
   latitude: '', longitude: '',
 }
+
+const EMPTY_TREE_ENTRY: TreeEntry = { tree_name: '', quantity: '1' }
 
 const Field = ({ id, label, error, children }: { id: string; label: string; error?: string; children: React.ReactNode }) => (
   <div className="space-y-1">
@@ -30,10 +45,11 @@ const Field = ({ id, label, error, children }: { id: string; label: string; erro
 
 export default function VolunteerPage() {
   const [form, setForm]       = useState<FormData>(INITIAL)
+  const [trees, setTrees]     = useState<TreeEntry[]>([EMPTY_TREE_ENTRY])
   const [errors, setErrors]   = useState<Partial<FormData>>({})
-  const [geoStatus, setGeoStatus] = useState<{ msg: string; ok: boolean } | null>(null)
+  const [treesError, setTreesError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [submitted, setSubmitted]   = useState<{ tree_code: string } | null>(null)
+  const [submitted, setSubmitted]   = useState<SubmittedTree[] | null>(null)
   const [organizations, setOrganizations] = useState<Organization[]>([])
   const [orgsLoading, setOrgsLoading]     = useState(true)
 
@@ -47,49 +63,43 @@ export default function VolunteerPage() {
   const set = (k: keyof FormData) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }))
 
+  function handleLocationChange(lat: string, lng: string) {
+    setForm(f => ({ ...f, latitude: lat, longitude: lng }))
+    setErrors(e => ({ ...e, latitude: undefined }))
+  }
+
+  function updateTreeEntry(i: number, key: keyof TreeEntry, value: string) {
+    setTrees(list => list.map((t, idx) => idx === i ? { ...t, [key]: value } : t))
+  }
+
+  function addTreeEntry() {
+    setTrees(list => [...list, { ...EMPTY_TREE_ENTRY }])
+  }
+
+  function removeTreeEntry(i: number) {
+    setTrees(list => list.length > 1 ? list.filter((_, idx) => idx !== i) : list)
+  }
+
   function validate(): boolean {
     const e: Partial<FormData> = {}
     if (!form.department.trim())     e.department     = 'প্রতিষ্ঠান বেছে নিন'
     if (!form.zone)                  e.zone           = 'এলাকা বেছে নিন'
-    if (!form.tree_name.trim())      e.tree_name      = 'গাছের নাম লিখুন'
-    if (!form.latitude)              e.latitude       = 'GPS অবস্থান নিন'
-    setErrors(e)
-    return Object.keys(e).length === 0
-  }
-
-  function captureGPS() {
-    setGeoStatus({ msg: 'অবস্থান খোঁজা হচ্ছে…', ok: false })
-    if (!navigator.geolocation) {
-      setGeoStatus({ msg: 'এই ডিভাইসে GPS নেই।', ok: false })
-      return
+    if (!form.latitude || !form.longitude) {
+      e.latitude = 'ম্যাপে ট্যাপ করে অবস্থান নির্বাচন করুন'
+    } else {
+      const { bounds } = MAP_CONFIG
+      const lat = parseFloat(form.latitude)
+      const lng = parseFloat(form.longitude)
+      if (lat < bounds.south || lat > bounds.north || lng < bounds.west || lng > bounds.east) {
+        e.latitude = 'অবস্থান শরীয়তপুর সদরের বাইরে। সঠিক জায়গা নির্বাচন করুন।'
+      }
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude.toFixed(6)
-        const lng = pos.coords.longitude.toFixed(6)
-        // Bounds check
-        const { bounds } = MAP_CONFIG
-        if (
-          pos.coords.latitude  < bounds.south || pos.coords.latitude  > bounds.north ||
-          pos.coords.longitude < bounds.west  || pos.coords.longitude > bounds.east
-        ) {
-          setGeoStatus({ msg: '⚠ অবস্থান শরীয়তপুর সদরের বাইরে। ঠিক জায়গায় আছেন কিনা নিশ্চিত করুন।', ok: false })
-          return
-        }
-        setForm(f => ({ ...f, latitude: lat, longitude: lng }))
-        setErrors(e => ({ ...e, latitude: undefined }))
-        setGeoStatus({ msg: `✓ পাওয়া গেছে — নির্ভুলতা ±${Math.round(pos.coords.accuracy)} মিটার`, ok: true })
-      },
-      (err) => {
-        const msgs: Record<number, string> = {
-          1: 'অনুমতি দেননি — ব্রাউজার সেটিংস থেকে Location চালু করুন।',
-          2: 'অবস্থান পাওয়া যাচ্ছে না।',
-          3: 'সময় শেষ হয়ে গেছে, আবার চেষ্টা করুন।',
-        }
-        setGeoStatus({ msg: msgs[err.code] || 'অজানা সমস্যা।', ok: false })
-      },
-      { timeout: 10000, enableHighAccuracy: true }
-    )
+    setErrors(e)
+
+    const treesValid = trees.every(t => t.tree_name.trim() && parseInt(t.quantity, 10) > 0)
+    setTreesError(treesValid ? '' : 'প্রতিটি গাছের নাম ও সংখ্যা (কমপক্ষে ১) দিন')
+
+    return Object.keys(e).length === 0 && treesValid
   }
 
   async function handleSubmit() {
@@ -103,6 +113,7 @@ export default function VolunteerPage() {
           ...form,
           latitude:  parseFloat(form.latitude),
           longitude: parseFloat(form.longitude),
+          trees: trees.map(t => ({ tree_name: t.tree_name.trim(), quantity: parseInt(t.quantity, 10) })),
         }),
       })
       const data = await res.json()
@@ -110,7 +121,7 @@ export default function VolunteerPage() {
         alert(data.error || 'সমস্যা হয়েছে।')
         return
       }
-      setSubmitted({ tree_code: data.tree_code })
+      setSubmitted(data.trees)
     } catch {
       alert('নেটওয়ার্ক সমস্যা। আবার চেষ্টা করুন।')
     } finally {
@@ -125,12 +136,16 @@ export default function VolunteerPage() {
           <div className="text-5xl text-forest-500">🌳</div>
           <h2 className="text-xl font-semibold text-forest-700">গাছ সফলভাবে নিবন্ধিত!</h2>
           <p className="text-gray-600">আপনার অবদান মানচিত্রে যুক্ত হবে যাচাইয়ের পর।</p>
-          <div className="bg-forest-50 border border-forest-200 rounded-lg px-4 py-3 text-sm">
-            <span className="text-gray-500">গাছ আইডি: </span>
-            <span className="font-mono font-semibold text-forest-700">{submitted.tree_code}</span>
+          <div className="bg-forest-50 border border-forest-200 rounded-lg px-4 py-3 text-sm space-y-1.5">
+            {submitted.map(t => (
+              <div key={t.id} className="flex items-center justify-between gap-3">
+                <span className="text-gray-600">{t.tree_name} × {t.quantity.toLocaleString('bn')}</span>
+                <span className="font-mono font-semibold text-forest-700">{t.tree_code}</span>
+              </div>
+            ))}
           </div>
-          <p className="text-xs text-gray-400">এই কোডটি সংরক্ষণ করুন।</p>
-          <button className="btn-primary w-full" onClick={() => { setForm(INITIAL); setSubmitted(null); setGeoStatus(null) }}>
+          <p className="text-xs text-gray-400">এই কোডগুলো সংরক্ষণ করুন।</p>
+          <button className="btn-primary w-full" onClick={() => { setForm(INITIAL); setTrees([{ ...EMPTY_TREE_ENTRY }]); setSubmitted(null) }}>
             আরেকটি গাছ লাগান
           </button>
         </div>
@@ -177,47 +192,48 @@ export default function VolunteerPage() {
               {ZONES.map(z => <option key={z} value={z}>{z}</option>)}
             </select>
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field id="tree" label="গাছের নাম *" error={errors.tree_name}>
-              <input id="tree" list="treeSuggestions" className={`input ${errors.tree_name ? 'border-red-400' : ''}`}
-                placeholder="আম, নিম, সেগুন…" value={form.tree_name} onChange={set('tree_name')} />
-              <datalist id="treeSuggestions">
-                {TREE_SUGGESTIONS.map(t => (
-                  <option key={t.name} value={t.name}>{t.scientific}</option>
-                ))}
-              </datalist>
-            </Field>
-            <Field id="sci" label="বৈজ্ঞানিক নাম (ঐচ্ছিক)" error={undefined}>
-              <input id="sci" className="input" placeholder="Mangifera indica"
-                value={form.tree_scientific} onChange={set('tree_scientific')} />
-            </Field>
+
+          {/* Tree types + quantities */}
+          <div className="space-y-2">
+            <label className="label">গাছের ধরন ও সংখ্যা *</label>
+            {trees.map((t, i) => (
+              <div key={i} className="flex gap-2">
+                <input list="treeSuggestions" className="input text-sm flex-1"
+                  placeholder="আম, নিম, সেগুন…"
+                  value={t.tree_name} onChange={e => updateTreeEntry(i, 'tree_name', e.target.value)} />
+                <input type="number" min={1} className="input text-sm w-20"
+                  placeholder="সংখ্যা"
+                  value={t.quantity} onChange={e => updateTreeEntry(i, 'quantity', e.target.value)} />
+                <button type="button" className="text-red-500 text-sm px-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                  onClick={() => removeTreeEntry(i)} disabled={trees.length === 1}>✕</button>
+              </div>
+            ))}
+            <datalist id="treeSuggestions">
+              {TREE_SUGGESTIONS.map(t => (
+                <option key={t.name} value={t.name}>{t.scientific}</option>
+              ))}
+            </datalist>
+            <button type="button" className="btn-secondary text-xs" onClick={addTreeEntry}>
+              + আরেকটি গাছ যোগ করুন
+            </button>
+            {treesError && <p className="text-xs text-red-600">{treesError}</p>}
           </div>
 
-          {/* GPS capture */}
+          {/* Location pin */}
           <div className="space-y-1">
-            <label className="label">GPS অবস্থান *</label>
-            <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 space-y-3">
-              <button type="button" className="btn-secondary w-full text-sm" onClick={captureGPS}>
-                📍 আমার বর্তমান অবস্থান নিন
-              </button>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label className="label text-xs">অক্ষাংশ (Lat)</label>
-                  <input readOnly className="input text-xs bg-gray-100" placeholder="23.2170" value={form.latitude} />
-                </div>
-                <div className="space-y-1">
-                  <label className="label text-xs">দ্রাঘিমাংশ (Lng)</label>
-                  <input readOnly className="input text-xs bg-gray-100" placeholder="90.3500" value={form.longitude} />
-                </div>
-              </div>
-              {geoStatus && (
-                <p className={`text-xs ${geoStatus.ok ? 'text-forest-700' : 'text-amber-700'}`}>
-                  {geoStatus.msg}
-                </p>
-              )}
-              {errors.latitude && <p className="text-xs text-red-600">{errors.latitude}</p>}
-            </div>
+            <label className="label">গাছের অবস্থান *</label>
+            <LocationPicker onChange={handleLocationChange} />
+            <p className="text-xs text-gray-400">ম্যাপে ট্যাপ করুন অথবা পিন টেনে সঠিক জায়গায় বসান।</p>
+            {form.latitude && !errors.latitude && (
+              <p className="text-xs text-forest-700">✓ নির্বাচিত: {form.latitude}, {form.longitude}</p>
+            )}
+            {errors.latitude && <p className="text-xs text-red-600">{errors.latitude}</p>}
           </div>
+
+          <Field id="locName" label="অবস্থানের নাম (ঐচ্ছিক)" error={undefined}>
+            <input id="locName" className="input" placeholder="যেমনঃ মসজিদের পাশে, বাজারের সামনে"
+              value={form.location_name} onChange={set('location_name')} />
+          </Field>
         </div>
 
         {/* Notes */}
@@ -232,7 +248,7 @@ export default function VolunteerPage() {
           {submitting ? 'সংরক্ষণ হচ্ছে…' : '🌱 বৃক্ষরোপণ নিবন্ধন করুন'}
         </button>
         <p className="text-center text-xs text-gray-400 pb-8">
-          * চিহ্নিত ঘর অবশ্যই পূরণ করতে হবে। অবস্থান শুধু মানচিত্রে ব্যবহার হবে।
+          * চিহ্নিত ঘর অবশ্যই পূরণ করতে হবে।
         </p>
       </div>
     </div>

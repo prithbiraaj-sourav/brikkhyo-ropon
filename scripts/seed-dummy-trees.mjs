@@ -1,8 +1,10 @@
 // Seeds dummy tree records via the local dev API so the admin panel can be
-// exercised without physically being in Shariatpur Sadar to capture GPS.
+// exercised without physically being in Shariatpur Sadar to pin a location.
 //
 // Usage: node scripts/seed-dummy-trees.mjs [count]
 // Requires the dev server running (npm run dev) and .env.local populated.
+// `count` is the number of submissions (each submission lists 1-3 tree
+// species with a quantity, matching the volunteer form's shape).
 
 import { readFileSync } from 'node:fs'
 
@@ -33,23 +35,17 @@ const ZONES = [
 ]
 
 const TREES = [
-  ['সেগুন', 'Tectona grandis'], ['নিম', 'Azadirachta indica'], ['আম', 'Mangifera indica'],
-  ['কাঁঠাল', 'Artocarpus heterophyllus'], ['বাঁশ', 'Bambusoideae'], ['অর্জুন', 'Terminalia arjuna'],
-  ['রেইনট্রি', 'Samanea saman'], ['কৃষ্ণচূড়া', 'Delonix regia'], ['নারকেল', 'Cocos nucifera'],
-  ['হিজল', 'Barringtonia acutangula'], ['করই', 'Albizia procera'], ['শিমুল', 'Bombax ceiba'],
-  ['মেহগনি', 'Swietenia mahagoni'], ['জাম', 'Syzygium cumini'], ['লিচু', 'Litchi chinensis'],
-  ['পেয়ারা', 'Psidium guajava'], ['তাল', 'Borassus flabellifer'], ['খেজুর', 'Phoenix sylvestris'],
+  'সেগুন', 'নিম', 'আম', 'কাঁঠাল', 'বাঁশ', 'অর্জুন', 'রেইনট্রি', 'কৃষ্ণচূড়া',
+  'নারকেল', 'হিজল', 'করই', 'শিমুল', 'মেহগনি', 'জাম', 'লিচু', 'পেয়ারা', 'তাল', 'খেজুর',
 ]
-
-const FIRST_NAMES = [
-  'রহিম', 'করিম', 'সালমা', 'ফাতেমা', 'জসিম', 'নাসরিন', 'আব্দুল্লাহ', 'রাশেদা', 'মাহমুদ', 'রুবিনা',
-  'শাহীন', 'তানভীর', 'রোকেয়া', 'সাদিয়া', 'ইব্রাহিম', 'হাসিনা', 'কামাল', 'শিরিন', 'মোতালেব', 'জান্নাত',
-]
-const LAST_NAMES = ['উদ্দিন', 'ইসলাম', 'বেগম', 'হোসেন', 'আক্তার', 'খান', 'আলী', 'মিয়া', 'সরকার', 'তালুকদার']
 
 const DEPARTMENTS = [
   'পরিবেশ অধিদপ্তর', 'শরীয়তপুর সদর উপজেলা পরিষদ', 'সরকারি বিদ্যালয়', 'স্থানীয় যুব সংগঠন',
   'বন বিভাগ', 'রেড ক্রিসেন্ট সোসাইটি', 'বেসরকারি উন্নয়ন সংস্থা', 'কৃষি সম্প্রসারণ অধিদপ্তর',
+]
+
+const LOCATION_NAMES = [
+  '', '', '', 'মসজিদের পাশে', 'বাজারের সামনে', 'বিদ্যালয় মাঠে', 'পুকুর পাড়ে', 'রাস্তার ধারে',
 ]
 
 const NOTES = [
@@ -61,7 +57,7 @@ const NOTES = [
 const BOUNDS = { south: 23.05, north: 23.30, west: 90.10, east: 90.35 }
 
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)] }
-function randPhone() { return '01' + String(Math.floor(300000000 + Math.random() * 699999999)) }
+function randInt(min, max) { return Math.floor(min + Math.random() * (max - min + 1)) }
 function randCoord() {
   return {
     latitude:  (BOUNDS.south + Math.random() * (BOUNDS.north - BOUNDS.south)).toFixed(6),
@@ -69,20 +65,40 @@ function randCoord() {
   }
 }
 
+function randomTreeEntries() {
+  const shuffled = [...TREES].sort(() => Math.random() - 0.5)
+  const count = randInt(1, 3)
+  return shuffled.slice(0, count).map(tree_name => ({ tree_name, quantity: randInt(1, 50) }))
+}
+
+async function seedOrganizations() {
+  console.log(`Seeding ${DEPARTMENTS.length} organizations ...`)
+  for (const name of DEPARTMENTS) {
+    const res = await fetch(`${BASE_URL}/api/organizations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': ADMIN_SECRET },
+      body: JSON.stringify({ name }),
+    })
+    if (!res.ok && res.status !== 409) {
+      const data = await res.json()
+      console.error(`  failed to add "${name}":`, data.error)
+    }
+  }
+}
+
 async function seed() {
-  console.log(`Seeding ${COUNT} dummy trees against ${BASE_URL} ...`)
+  await seedOrganizations()
+
+  console.log(`Seeding ${COUNT} dummy submissions against ${BASE_URL} ...`)
   const created = []
 
   for (let i = 0; i < COUNT; i++) {
-    const [tree_name, tree_scientific] = rand(TREES)
     const { latitude, longitude } = randCoord()
     const body = {
-      volunteer_name: `${rand(FIRST_NAMES)} ${rand(LAST_NAMES)}`,
-      phone: randPhone(),
       department: rand(DEPARTMENTS),
       zone: rand(ZONES),
-      tree_name,
-      tree_scientific,
+      trees: randomTreeEntries(),
+      location_name: rand(LOCATION_NAMES) || undefined,
       notes: rand(NOTES) || undefined,
       latitude,
       longitude,
@@ -98,8 +114,8 @@ async function seed() {
       console.error(`  [${i}] failed:`, data.error)
       continue
     }
-    created.push(data.id)
-    process.stdout.write(`\r  created ${created.length}/${COUNT}`)
+    for (const t of data.trees) created.push(t.id)
+    process.stdout.write(`\r  created ${created.length} tree rows from ${i + 1}/${COUNT} submissions`)
   }
   console.log()
 
@@ -125,7 +141,7 @@ async function seed() {
     // remaining ~30% stay pending
   }
 
-  console.log(`Done. ${created.length} created — ${verified} verified, ${rejected} rejected, ${created.length - verified - rejected} pending.`)
+  console.log(`Done. ${created.length} tree rows created — ${verified} verified, ${rejected} rejected, ${created.length - verified - rejected} pending.`)
 }
 
 seed().catch(err => { console.error(err); process.exit(1) })

@@ -10,7 +10,7 @@ export async function GET() {
   const supabase = getAdminClient()
   const { data, error } = await supabase
     .from('organizations')
-    .select('id, name')
+    .select('id, name, created_at')
     .order('name')
 
   if (error) {
