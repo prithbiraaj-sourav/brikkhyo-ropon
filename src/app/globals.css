@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-bangla: 'Noto Sans Bengali', sans-serif;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: var(--font-bangla);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Fix Leaflet icon paths broken by Next.js asset hashing */
+  .leaflet-default-icon-path {
+    background-image: url('https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png');
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-forest-500 hover:bg-forest-700 active:scale-[0.98] text-white font-semibold
+           px-4 py-2.5 rounded-lg transition-colors duration-150 cursor-pointer
+           flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply border border-gray-200 hover:bg-gray-50 active:scale-[0.98] text-gray-700
+           font-medium px-4 py-2.5 rounded-lg transition-colors duration-150 cursor-pointer
+           flex items-center justify-center gap-2;
+  }
+
+  .card {
+    @apply bg-white border border-gray-100 rounded-xl p-5;
+  }
+
+  .input {
+    @apply w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm
+           focus:outline-none focus:border-forest-500 focus:ring-2 focus:ring-forest-500/10
+           bg-white text-gray-900 font-bangla placeholder:text-gray-400;
+  }
+
+  .label {
+    @apply block text-sm text-gray-500 mb-1.5;
+  }
+
+  .badge-pending  { @apply inline-block text-xs font-semibold px-2 py-0.5 rounded bg-amber-50  text-amber-700  border border-amber-200; }
+  .badge-verified { @apply inline-block text-xs font-semibold px-2 py-0.5 rounded bg-forest-50 text-forest-700 border border-forest-200; }
+  .badge-rejected { @apply inline-block text-xs font-semibold px-2 py-0.5 rounded bg-red-50    text-red-700    border border-red-200; }
+
+  .stat-card {
+    @apply bg-gray-50 rounded-xl p-3.5;
+  }
+}
