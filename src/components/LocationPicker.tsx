@@ -1,11 +1,26 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MAP_CONFIG } from '@/lib/constants'
 
 type Props = {
+  latitude: string
+  longitude: string
   onChange: (lat: string, lng: string) => void
 }
+
+type SearchResult = {
+  place_id: number
+  display_name: string
+  lat: string
+  lon: string
+}
+
+// Default view for the picker map: Shariatpur Sadar town, closer zoom than
+// the overview MAP_CONFIG.zoom (12) used by TreeMap since this map is for
+// pinpointing a single plantation spot, not surveying the whole upazila.
+const DEFAULT_CENTER: [number, number] = [23.2170, 90.3500]
+const DEFAULT_ZOOM = 13
 
 function injectLeafletCSS() {
   const href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
@@ -37,12 +52,18 @@ function loadLeaflet() {
   return leafletLoadPromise
 }
 
-export default function LocationPicker({ onChange }: Props) {
-  const mapRef      = useRef<HTMLDivElement>(null)
-  const leafletRef  = useRef<any>(null)
-  const markerRef   = useRef<any>(null)
-  const onChangeRef = useRef(onChange)
+export default function LocationPicker({ latitude, longitude, onChange }: Props) {
+  const mapRef       = useRef<HTMLDivElement>(null)
+  const leafletRef   = useRef<any>(null)
+  const markerRef    = useRef<any>(null)
+  const onChangeRef  = useRef(onChange)
   onChangeRef.current = onChange
+
+  const [query, setQuery]             = useState('')
+  const [results, setResults]         = useState<SearchResult[]>([])
+  const [searching, setSearching]     = useState(false)
+  const [showResults, setShowResults] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!mapRef.current || leafletRef.current) return
@@ -54,8 +75,8 @@ export default function LocationPicker({ onChange }: Props) {
       if (cancelled || !mapRef.current || leafletRef.current) return
 
       const map = L.map(mapRef.current, {
-        center:  MAP_CONFIG.center,
-        zoom:    MAP_CONFIG.zoom,
+        center:  DEFAULT_CENTER,
+        zoom:    DEFAULT_ZOOM,
         minZoom: MAP_CONFIG.minZoom,
         maxZoom: MAP_CONFIG.maxZoom,
       })
@@ -80,7 +101,7 @@ export default function LocationPicker({ onChange }: Props) {
 
       map.on('click', (e: any) => placeMarker(e.latlng.lat, e.latlng.lng))
 
-      leafletRef.current = { map, L }
+      leafletRef.current = { map, L, placeMarker }
     })
 
     return () => {
@@ -94,5 +115,79 @@ export default function LocationPicker({ onChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  return <div ref={mapRef} style={{ height: 280, width: '100%', borderRadius: 8 }} />
+  // Debounced place search against Nominatim, boxed to Shariatpur Sadar so
+  // stray results outside the working area don't show up.
+  useEffect(() => {
+    if (!query.trim()) {
+      setResults([])
+      setShowResults(false)
+      return
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true)
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&viewbox=90.10,23.05,90.35,23.30&bounded=1&countrycodes=bd`
+        const res = await fetch(url, { headers: { 'Accept-Language': 'bn' } })
+        const data: SearchResult[] = await res.json()
+        setResults(data)
+        setShowResults(true)
+      } catch {
+        setResults([])
+      } finally {
+        setSearching(false)
+      }
+    }, 500)
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [query])
+
+  function selectResult(r: SearchResult) {
+    const lat = parseFloat(r.lat)
+    const lng = parseFloat(r.lon)
+    setQuery(r.display_name)
+    setShowResults(false)
+    setResults([])
+    if (leafletRef.current) {
+      leafletRef.current.map.flyTo([lat, lng], 16)
+      leafletRef.current.placeMarker(lat, lng)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="relative">
+        <input
+          type="text"
+          className="input text-sm"
+          placeholder="স্থান খুঁজুন (যেমনঃ পালং বাজার)…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onFocus={() => results.length > 0 && setShowResults(true)}
+          onBlur={() => setTimeout(() => setShowResults(false), 150)}
+        />
+        {searching && (
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">খুঁজছে…</span>
+        )}
+        {showResults && results.length > 0 && (
+          <ul className="absolute z-[1000] left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg text-sm">
+            {results.map(r => (
+              <li key={r.place_id}
+                className="px-3 py-2 hover:bg-forest-50 cursor-pointer border-b border-gray-100 last:border-0"
+                onMouseDown={() => selectResult(r)}>
+                {r.display_name}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div ref={mapRef} style={{ height: 300, width: '100%', borderRadius: 8 }} />
+
+      <p className="text-xs text-gray-500">
+        {latitude && longitude ? `পিন অবস্থান: ${latitude}, ${longitude}` : 'ম্যাপে ট্যাপ করুন অথবা উপরে স্থান খুঁজে পিন বসান'}
+      </p>
+    </div>
+  )
 }

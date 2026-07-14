@@ -9,7 +9,7 @@ import type { Organization } from '@/lib/supabase'
 const LocationPicker = dynamic(() => import('@/components/LocationPicker'), {
   ssr: false,
   loading: () => (
-    <div className="h-[280px] w-full rounded-lg bg-gray-100 flex items-center justify-center text-xs text-gray-400">
+    <div className="h-[340px] w-full rounded-lg bg-gray-100 flex items-center justify-center text-xs text-gray-400">
       ম্যাপ লোড হচ্ছে…
     </div>
   ),
@@ -91,7 +91,7 @@ export default function VolunteerPage() {
       const lat = parseFloat(form.latitude)
       const lng = parseFloat(form.longitude)
       if (lat < bounds.south || lat > bounds.north || lng < bounds.west || lng > bounds.east) {
-        e.latitude = 'অবস্থান শরীয়তপুর সদরের বাইরে। সঠিক জায়গা নির্বাচন করুন।'
+        e.latitude = 'অবস্থান শরীয়তপুর সদরের বাইরে'
       }
     }
     setErrors(e)
@@ -222,11 +222,17 @@ export default function VolunteerPage() {
           {/* Location pin */}
           <div className="space-y-1">
             <label className="label">গাছের অবস্থান *</label>
-            <LocationPicker onChange={handleLocationChange} />
-            <p className="text-xs text-gray-400">ম্যাপে ট্যাপ করুন অথবা পিন টেনে সঠিক জায়গায় বসান।</p>
-            {form.latitude && !errors.latitude && (
-              <p className="text-xs text-forest-700">✓ নির্বাচিত: {form.latitude}, {form.longitude}</p>
-            )}
+            <LocationPicker
+              latitude={form.latitude}
+              longitude={form.longitude}
+              onChange={handleLocationChange}
+            />
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <input className="input text-sm bg-gray-50 text-gray-500" readOnly
+                value={form.latitude} placeholder="Latitude" />
+              <input className="input text-sm bg-gray-50 text-gray-500" readOnly
+                value={form.longitude} placeholder="Longitude" />
+            </div>
             {errors.latitude && <p className="text-xs text-red-600">{errors.latitude}</p>}
           </div>
 
